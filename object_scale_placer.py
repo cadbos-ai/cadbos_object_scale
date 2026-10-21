@@ -215,6 +215,10 @@ class ObjectScalePlacer:
                 "shadow_strength": ("FLOAT", {
                     "default": 1.0, "min": 0.0, "max": 2.0, "step": 0.05,
                     "tooltip": "Сила перенесённой тени: 0 — нет, 1 — как на этапе 1."}),
+                "shadow_reach": ("INT", {
+                    "default": 0, "min": 0, "max": 256, "step": 1,
+                    "tooltip": "Переносить только тень у самого объекта (контактную), px. "
+                               "0 — переносить всю тень."}),
             },
         }
 
@@ -224,7 +228,7 @@ class ObjectScalePlacer:
               depth=None, occluders=None, depth_margin=0.03,
               depth_near_is_bright=True, h_anchor="center",
               offset_x=0, offset_y=0, shadow_source=None,
-              shadow_margin=48, shadow_strength=1.0):
+              shadow_margin=48, shadow_strength=1.0, shadow_reach=0):
         img = scene[0].clone().float()
         H, W, _ = img.shape
         dev = img.device
@@ -360,7 +364,9 @@ class ObjectScalePlacer:
             ratio = _push_pull_fill(ratio[..., None], objm)[..., 0]  # под объектом — по соседям
             ratio = _blur(ratio, 4)
             dark = ((1 - ratio) - 0.05).clamp_min(0) / 0.95
-            dark = dark * _blur(inner, f) * float(shadow_strength)
+            if shadow_reach > 0:  # оставить только контактную тень у объекта
+                near = _dilate((rm[sy0:sy1, sx0:sx1] > 0.5).float(), int(shadow_reach))
+                dark = dark * _blur(near, max(2, int(shadow_reach) // 2))
             fx, fy = nw / rw, nh / rh
             dh = max(2, int(round((sy1 - sy0) * fy)))
             dw = max(2, int(round((sx1 - sx0) * fx)))
