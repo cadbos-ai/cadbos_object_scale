@@ -142,8 +142,8 @@ def _draw_rect(img, x0, y0, x1, y1, t, color):
 class ObjectScalePlacer:
     CATEGORY = "cadbos/object"
     FUNCTION = "place"
-    RETURN_TYPES = ("IMAGE", "MASK", "MASK", "IMAGE", "STRING")
-    RETURN_NAMES = ("guide_image", "union_mask", "object_mask", "preview", "info")
+    RETURN_TYPES = ("IMAGE", "MASK", "MASK", "IMAGE", "STRING", "MASK")
+    RETURN_NAMES = ("guide_image", "union_mask", "object_mask", "preview", "info", "protect")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -183,12 +183,38 @@ class ObjectScalePlacer:
                 "protect_mask": ("MASK", {
                     "tooltip": "Что нельзя закрывать (предметы на переднем плане). "
                                "Подключите выход узла 63."}),
+                "background": ("IMAGE", {
+                    "tooltip": "Сцена с уже удалённым старым объектом (узел 220). "
+                               "Если подключено — используется вместо размытой заливки."}),
+                "depth": ("IMAGE", {
+                    "tooltip": "Карта глубины сцены (узел 105)."}),
+                "occluders": ("MASK", {
+                    "tooltip": "Найденные предметы сцены без старого объекта."}),
+                "depth_margin": ("FLOAT", {
+                    "default": 0.03, "min": 0.0, "max": 0.5, "step": 0.01,
+                    "tooltip": "Насколько предмет должен быть ближе переднего края "
+                               "объекта, чтобы считаться передним планом."}),
+                "depth_near_is_bright": ("BOOLEAN", {"default": True}),
+                "h_anchor": (["center", "left", "right"], {
+                    "default": "center",
+                    "tooltip": "Какой край по горизонтали остаётся на месте: "
+                               "left — левый (объект растёт вправо), right — правый, "
+                               "center — центр."}),
+                "offset_x": ("INT", {
+                    "default": 0, "min": -4096, "max": 4096, "step": 1,
+                    "tooltip": "Сдвиг по горизонтали, px сцены (+ вправо)."}),
+                "offset_y": ("INT", {
+                    "default": 0, "min": -4096, "max": 4096, "step": 1,
+                    "tooltip": "Сдвиг по вертикали, px сцены (+ вниз)."}),
             },
         }
 
     def place(self, scene, target_mask, reference, scale_percent, fit, anchor,
               mode, erase_grow, frame_thickness, bg_tolerance,
-              reference_mask=None, protect_mask=None):
+              reference_mask=None, protect_mask=None, background=None,
+              depth=None, occluders=None, depth_margin=0.03,
+              depth_near_is_bright=True, h_anchor="center",
+              offset_x=0, offset_y=0):
         img = scene[0].clone().float()
         H, W, _ = img.shape
         dev = img.device
@@ -234,25 +260,64 @@ class ObjectScalePlacer:
         factor = 1.0 if scale_percent <= 0 else scale_percent / 100.0
         s = s_auto * factor
         nw, nh = rw * s, rh * s
-        k = min(1.0, W / nw, H / nh)          # не больше кадра
+        k = min(1.0, W / nw, H / nh)  # не больше кадра
         nw, nh = max(2, int(round(nw * k))), max(2, int(round(nh * k)))
 
         # --- положение
-        cx = (ox0 + ox1) / 2.0
-        nx0 = int(round(cx - nw / 2.0))
+        if h_anchor == "left":
+            nx0 = ox0
+        elif h_anchor == "right":
+            nx0 = ox1 - nw
+        else:
+            nx0 = int(round((ox0 + ox1) / 2.0 - nw / 2.0))
         if anchor == "bottom":
             ny0 = oy1 - nh
         elif anchor == "top":
             ny0 = oy0
         else:
             ny0 = int(round((oy0 + oy1) / 2.0 - nh / 2.0))
+        nx0 += int(offset_x)
+        ny0 += int(offset_y)
         nx0 = max(0, min(W - nw, nx0))
         ny0 = max(0, min(H - nh, ny0))
         nx1, ny1 = nx0 + nw, ny0 + nh
 
-        # --- 1) стереть старый объект (кроме защищённых предметов)
-        hole = _dilate(old, erase_grow) * (1 - prot)
-        guide = _push_pull_fill(img, hole, exclude=_dilate(prot, 4))
+        # --- 0) доп. защита: предметы ПЕРЕД новым объектом (по глубине)
+        extra_px = 0
+        if occluders is not None and depth is not None:
+            occ = occluders.float().to(dev)
+            if occ.dim() == 3:
+                occ = occ.amax(dim=0)
+            occ = (_resize_mask(occ, H, W) > 0.5).float()
+            dep = depth[0].float().to(dev)
+            if dep.dim() == 3:
+                dep = dep.mean(dim=-1)
+            dep = _resize_mask(dep, H, W)
+            if not depth_near_is_bright:
+                dep = 1.0 - dep
+            vals = dep[old > 0.5]
+            if vals.numel() > 0:
+                d_front = torch.quantile(vals, 0.9)  # передний край объекта
+                zone = torch.zeros((H, W), device=dev)
+                zone[ny0:ny1, nx0:nx1] = 1.0
+                zone = _dilate(zone, 8)
+                extra = occ * zone * (dep > d_front + depth_margin).float() * (1 - old)
+                extra = _dilate(_erode(extra, 2), 6)  # убрать крошки, чуть расширить
+                extra_px = int(extra.sum().item())
+                prot = torch.maximum(prot, extra)
+
+        # --- 1) фон без старого объекта
+        if background is not None:
+            bgi = background[0].float().to(dev)[..., :3]
+            if bgi.shape[0] != H or bgi.shape[1] != W:
+                bgi = F.interpolate(bgi.permute(2, 0, 1)[None], size=(H, W),
+                                    mode="bilinear", align_corners=False)[0].permute(1, 2, 0)
+            guide = bgi.clone()
+            bg_src = "чистый (background)"
+        else:
+            hole = _dilate(old, erase_grow) * (1 - prot)
+            guide = _push_pull_fill(img, hole, exclude=_dilate(prot, 4))
+            bg_src = "размытая заливка"
 
         # --- 2) поставить новый объект
         box = torch.zeros((H, W), device=dev)
@@ -265,14 +330,17 @@ class ObjectScalePlacer:
                                antialias=antialias)[0].permute(1, 2, 0).clamp(0, 1)
             am = F.interpolate(rm_c[None, None], size=(nh, nw), mode="bilinear",
                                align_corners=False, antialias=antialias)[0, 0]
-            am = _blur(_erode((am > 0.5).float(), 1), 1)          # мягкий край
+            am = _blur(_erode((am > 0.5).float(), 1), 1)  # мягкий край
             am = am * (1 - prot[ny0:ny1, nx0:nx1])
             region = guide[ny0:ny1, nx0:nx1]
             guide[ny0:ny1, nx0:nx1] = region * (1 - am[..., None]) + rc * am[..., None]
             obj_mask[ny0:ny1, nx0:nx1] = am
         else:
+            base = guide.clone()
             guide = _draw_rect(guide, nx0, ny0, nx1, ny1, frame_thickness,
                                (0.0, 1.0, 0.0))
+            # рамку не рисуем поверх защищённых предметов
+            guide = torch.where(prot[..., None] > 0.5, base, guide)
             obj_mask = box.clone()
 
         # --- 3) маска перерисовки: старый объект + место нового
@@ -285,12 +353,13 @@ class ObjectScalePlacer:
 
         info = (f"режим: {mode}; масштаб: "
                 f"{'авто' if scale_percent <= 0 else f'{scale_percent:.0f}% от авто'} "
-                f"(fit={fit}, anchor={anchor})\n"
+                f"(fit={fit}, anchor={anchor}, h_anchor={h_anchor}, "
+                f"offset={offset_x},{offset_y})\n"
                 f"старый объект: {ow}x{oh}px @({ox0},{oy0}); "
                 f"новый объект: {nw}x{nh}px @({nx0},{ny0}); "
                 f"итоговый коэффициент к референсу: {s * k:.3f}\n"
-                f"маска референса: {src}"
+                f"маска референса: {src}; фон: {bg_src}; "
+                f"доп. защита (предметы спереди): {extra_px} px"
                 + ("; ВНИМАНИЕ: объект ограничен размером кадра" if k < 1.0 else ""))
-
         return (guide[None].clamp(0, 1), union[None], obj_mask[None],
-                prev[None].clamp(0, 1), info)
+                prev[None].clamp(0, 1), info, prot[None])
