@@ -206,6 +206,15 @@ class ObjectScalePlacer:
                 "offset_y": ("INT", {
                     "default": 0, "min": -4096, "max": 4096, "step": 1,
                     "tooltip": "Сдвиг по вертикали, px сцены (+ вниз)."}),
+                "shadow_source": ("IMAGE", {
+                    "tooltip": "Чистый фон, соответствующий reference (узел 220). "
+                               "Тень объекта переносится с reference и масштабируется вместе с ним."}),
+                "shadow_margin": ("INT", {
+                    "default": 48, "min": 0, "max": 256, "step": 1,
+                    "tooltip": "Насколько далеко от объекта искать его тень, px."}),
+                "shadow_strength": ("FLOAT", {
+                    "default": 1.0, "min": 0.0, "max": 2.0, "step": 0.05,
+                    "tooltip": "Сила перенесённой тени: 0 — нет, 1 — как на этапе 1."}),
             },
         }
 
@@ -214,7 +223,8 @@ class ObjectScalePlacer:
               reference_mask=None, protect_mask=None, background=None,
               depth=None, occluders=None, depth_margin=0.03,
               depth_near_is_bright=True, h_anchor="center",
-              offset_x=0, offset_y=0):
+              offset_x=0, offset_y=0, shadow_source=None,
+              shadow_margin=48, shadow_strength=1.0):
         img = scene[0].clone().float()
         H, W, _ = img.shape
         dev = img.device
@@ -323,6 +333,48 @@ class ObjectScalePlacer:
         box = torch.zeros((H, W), device=dev)
         box[ny0:ny1, nx0:nx1] = 1.0
         obj_mask = torch.zeros((H, W), device=dev)
+        shadow_px = 0
+        if mode == "collage" and shadow_source is not None and shadow_strength > 0:
+            # --- перенос тени: затемнение reference относительно чистого фона,
+            #     масштабированное и сдвинутое вместе с объектом
+            sh = shadow_source[0].float().to(dev)[..., :3]
+            if sh.shape[0] != RH or sh.shape[1] != RW:
+                sh = F.interpolate(sh.permute(2, 0, 1)[None], size=(RH, RW), mode="bilinear",
+                                   align_corners=False)[0].permute(1, 2, 0)
+            m = int(shadow_margin)
+            sx0, sy0 = max(0, rx0 - m), max(0, ry0 - m)
+            sx1, sy1 = min(RW, rx1 + m), min(RH, ry1 + m)
+            wts = torch.tensor([0.299, 0.587, 0.114], device=dev)
+            l_ref = (ref[sy0:sy1, sx0:sx1, :3] * wts).sum(-1)
+            l_bg = (sh[sy0:sy1, sx0:sx1] * wts).sum(-1)
+            ratio = (l_ref + 1e-3) / (l_bg + 1e-3)
+            objm = _dilate((rm[sy0:sy1, sx0:sx1] > 0.5).float(), 2)
+            f = max(2, m // 3)
+            inner = torch.zeros_like(ratio)
+            if ratio.shape[0] > 2 * f and ratio.shape[1] > 2 * f:
+                inner[f:-f, f:-f] = 1.0
+            border = (1 - inner) * (1 - objm)
+            if border.sum() > 16:  # выравнивание общей яркости этапа 1 и чистого фона
+                ratio = ratio / torch.quantile(ratio[border > 0.5], 0.75).clamp_min(1e-3)
+            ratio = ratio.clamp(0, 1)
+            ratio = _push_pull_fill(ratio[..., None], objm)[..., 0]  # под объектом — по соседям
+            ratio = _blur(ratio, 4)
+            dark = ((1 - ratio) - 0.05).clamp_min(0) / 0.95
+            dark = dark * _blur(inner, f) * float(shadow_strength)
+            fx, fy = nw / rw, nh / rh
+            dh = max(2, int(round((sy1 - sy0) * fy)))
+            dw = max(2, int(round((sx1 - sx0) * fx)))
+            dark_s = F.interpolate(dark[None, None], size=(dh, dw), mode="bilinear",
+                                   align_corners=False)[0, 0].clamp(0, 1)
+            tx0 = nx0 - int(round((rx0 - sx0) * fx))
+            ty0 = ny0 - int(round((ry0 - sy0) * fy))
+            cx0, cy0 = max(0, tx0), max(0, ty0)
+            cx1, cy1 = min(W, tx0 + dw), min(H, ty0 + dh)
+            if cx1 > cx0 and cy1 > cy0:
+                d = dark_s[cy0 - ty0:cy1 - ty0, cx0 - tx0:cx1 - tx0]
+                d = d * (1 - prot[cy0:cy1, cx0:cx1])
+                guide[cy0:cy1, cx0:cx1] = guide[cy0:cy1, cx0:cx1] * (1 - d[..., None])
+                shadow_px = int((d > 0.05).sum().item())
         if mode == "collage":
             antialias = nw < rw or nh < rh
             rc = F.interpolate(ref_c.permute(2, 0, 1)[None], size=(nh, nw),
@@ -359,7 +411,8 @@ class ObjectScalePlacer:
                 f"новый объект: {nw}x{nh}px @({nx0},{ny0}); "
                 f"итоговый коэффициент к референсу: {s * k:.3f}\n"
                 f"маска референса: {src}; фон: {bg_src}; "
-                f"доп. защита (предметы спереди): {extra_px} px"
+                f"доп. защита (предметы спереди): {extra_px} px; "
+                f"тень перенесена: {shadow_px} px"
                 + ("; ВНИМАНИЕ: объект ограничен размером кадра" if k < 1.0 else ""))
         return (guide[None].clamp(0, 1), union[None], obj_mask[None],
                 prev[None].clamp(0, 1), info, prot[None])
