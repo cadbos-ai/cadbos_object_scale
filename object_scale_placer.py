@@ -19,6 +19,8 @@ import math
 import torch
 import torch.nn.functional as F
 
+from .common import _resize_mask
+
 
 # ----------------------------------------------------------------- helpers
 
@@ -47,13 +49,6 @@ def _blur(m, r):
         return m
     x = F.pad(m[None, None], (r, r, r, r), mode="replicate")
     return F.avg_pool2d(x, 2 * r + 1, 1)[0, 0]
-
-
-def _resize_mask(m, h, w):
-    if m.shape[0] == h and m.shape[1] == w:
-        return m
-    return F.interpolate(m[None, None], size=(h, w), mode="bilinear",
-                         align_corners=False)[0, 0]
 
 
 def _push_pull_fill(img, hole, exclude=None):
