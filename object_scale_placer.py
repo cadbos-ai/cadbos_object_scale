@@ -214,6 +214,18 @@ class ObjectScalePlacer:
                     "default": 0, "min": 0, "max": 256, "step": 1,
                     "tooltip": "Переносить только тень у самого объекта (контактную), px. "
                                "0 — переносить всю тень."}),
+                "auto_shift": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Сдвигать объект по горизонтали (без изменения размера), "
+                               "если его нижняя часть наезжает на предметы из occluders "
+                               "на той же глубине. Нужны входы occluders и depth."}),
+                "shift_max": ("INT", {
+                    "default": 200, "min": 0, "max": 2048, "step": 1,
+                    "tooltip": "Максимальный автосдвиг в каждую сторону, px сцены."}),
+                "collision_band": ("FLOAT", {
+                    "default": 0.35, "min": 0.05, "max": 1.0, "step": 0.05,
+                    "tooltip": "Какая нижняя доля высоты объекта проверяется на столкновение "
+                               "(опора, ножки)."}),
             },
         }
 
@@ -223,7 +235,8 @@ class ObjectScalePlacer:
               depth=None, occluders=None, depth_margin=0.03,
               depth_near_is_bright=True, h_anchor="center",
               offset_x=0, offset_y=0, shadow_source=None,
-              shadow_margin=48, shadow_strength=1.0, shadow_reach=0):
+              shadow_margin=48, shadow_strength=1.0, shadow_reach=0,
+              auto_shift=False, shift_max=200, collision_band=0.35):
         img = scene[0].clone().float()
         H, W, _ = img.shape
         dev = img.device
@@ -290,6 +303,64 @@ class ObjectScalePlacer:
         nx0 = max(0, min(W - nw, nx0))
         ny0 = max(0, min(H - nh, ny0))
         nx1, ny1 = nx0 + nw, ny0 + nh
+
+        # --- автосдвиг при столкновении с предметами на той же глубине
+        shift_dx, coll_before, coll_after = 0, 0, 0
+        if auto_shift and occluders is not None and depth is not None and shift_max > 0:
+            occ_c = occluders.float().to(dev)
+            if occ_c.dim() == 3:
+                occ_c = occ_c.amax(dim=0)
+            occ_c = (_resize_mask(occ_c, H, W) > 0.5).float()
+            dep_c = depth[0].float().to(dev)
+            if dep_c.dim() == 3:
+                dep_c = dep_c.mean(dim=-1)
+            dep_c = _resize_mask(dep_c, H, W)
+            if not depth_near_is_bright:
+                dep_c = 1.0 - dep_c
+            v = dep_c[old > 0.5]
+            if v.numel() > 0:
+                d_back = torch.quantile(v, 0.1) - depth_margin
+                d_fr = torch.quantile(v, 0.9) + depth_margin
+                obst = occ_c * (dep_c >= d_back).float() * (dep_c <= d_fr).float()
+                # силуэт нового объекта и его нижняя полоса (опора)
+                foot = F.interpolate(rm_c[None, None], size=(nh, nw), mode="bilinear",
+                                     align_corners=False)[0, 0]
+                foot = (foot > 0.5).float()
+                band0 = int(round(nh * (1.0 - collision_band)))
+                foot[:band0] = 0
+                # исходное наложение объекта этапа 1 считаем допустимым
+                old_foot = old.clone()
+                ob0 = int(round(oy1 - oh * collision_band))
+                old_foot[:max(0, ob0)] = 0
+                base = float((old_foot * obst).sum().item())
+                tol = max(16.0, 0.01 * float(foot.sum().item()))
+
+                def cost(dx):
+                    x0 = nx0 + dx
+                    ov = float((foot * obst[ny0:ny1, x0:x0 + nw]).sum().item())
+                    return max(0.0, ov - base)
+
+                c0 = cost(0)
+                coll_before = int(c0)
+                coll_after = coll_before
+                if c0 > tol:
+                    best = (c0, 0)
+                    for dist in range(2, int(shift_max) + 1, 2):
+                        found = False
+                        for dx in (-dist, dist):
+                            if nx0 + dx < 0 or nx0 + dx + nw > W:
+                                continue
+                            c = cost(dx)
+                            if c < best[0]:
+                                best = (c, dx)
+                            if c <= tol:
+                                found = True
+                        if found:
+                            break
+                    shift_dx = best[1]
+                    coll_after = int(best[0])
+                    nx0 += shift_dx
+                    nx1 = nx0 + nw
 
         # --- 0) доп. защита: предметы ПЕРЕД новым объектом (по глубине)
         extra_px = 0
@@ -413,7 +484,8 @@ class ObjectScalePlacer:
                 f"итоговый коэффициент к референсу: {s * k:.3f}\n"
                 f"маска референса: {src}; фон: {bg_src}; "
                 f"доп. защита (предметы спереди): {extra_px} px; "
-                f"тень перенесена: {shadow_px} px"
+                f"тень перенесена: {shadow_px} px; "
+                f"автосдвиг: {shift_dx:+d} px (наложение {coll_before} -> {coll_after} px)"
                 + ("; ВНИМАНИЕ: объект ограничен размером кадра" if k < 1.0 else ""))
         return (guide[None].clamp(0, 1), union[None], obj_mask[None],
                 prev[None].clamp(0, 1), info, prot[None])
