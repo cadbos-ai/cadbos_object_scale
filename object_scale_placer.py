@@ -151,10 +151,11 @@ class ObjectScalePlacer:
                     "default": 0.0, "min": 0.0, "max": 400.0, "step": 1.0,
                     "tooltip": "0 = автоматически (вписать в рамку старого объекта). "
                                "100 = как авто, 150 = в 1,5 раза больше, 70 = на 30% меньше."}),
-                "fit": (["contain", "height", "width"], {
+                "fit": (["contain", "height", "width", "box"], {
                     "default": "contain",
                     "tooltip": "Как считать авторазмер: contain — целиком внутри рамки "
-                               "старого объекта; height — по высоте; width — по ширине."}),
+                               "старого объекта; height — по высоте; width — по ширине; "
+                               "box — рамка старого объекта как есть (только для режима frame)."}),
                 "anchor": (["bottom", "center", "top"], {
                     "default": "bottom",
                     "tooltip": "Какая точка старого объекта остаётся на месте: "
@@ -278,15 +279,19 @@ class ObjectScalePlacer:
         rw, rh = rx1 - rx0, ry1 - ry0
 
         # --- размер
-        if fit == "height":
-            s_auto = oh / rh
-        elif fit == "width":
-            s_auto = ow / rw
-        else:
-            s_auto = min(ow / rw, oh / rh)
         factor = 1.0 if scale_percent <= 0 else scale_percent / 100.0
-        s = s_auto * factor
-        nw, nh = rw * s, rh * s
+        if fit == "box":  # рамка = рамка старого объекта, пропорции референса не важны
+            s = factor
+            nw, nh = ow * factor, oh * factor
+        else:
+            if fit == "height":
+                s_auto = oh / rh
+            elif fit == "width":
+                s_auto = ow / rw
+            else:
+                s_auto = min(ow / rw, oh / rh)
+            s = s_auto * factor
+            nw, nh = rw * s, rh * s
         k = min(1.0, W / nw, H / nh)  # не больше кадра
         nw, nh = max(2, int(round(nw * k))), max(2, int(round(nh * k)))
 
