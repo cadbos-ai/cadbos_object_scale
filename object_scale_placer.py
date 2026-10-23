@@ -226,6 +226,10 @@ class ObjectScalePlacer:
                     "default": 0.35, "min": 0.05, "max": 1.0, "step": 0.05,
                     "tooltip": "Какая нижняя доля высоты объекта проверяется на столкновение "
                                "(опора, ножки)."}),
+                "shift_direction": (["auto", "left", "right"], {
+                    "default": "auto",
+                    "tooltip": "Куда сдвигать при столкновении: auto — прочь от места "
+                               "столкновения; left / right — только в эту сторону."}),
             },
         }
 
@@ -236,7 +240,8 @@ class ObjectScalePlacer:
               depth_near_is_bright=True, h_anchor="center",
               offset_x=0, offset_y=0, shadow_source=None,
               shadow_margin=48, shadow_strength=1.0, shadow_reach=0,
-              auto_shift=False, shift_max=200, collision_band=0.35):
+              auto_shift=False, shift_max=200, collision_band=0.35,
+              shift_direction="auto"):
         img = scene[0].clone().float()
         H, W, _ = img.shape
         dev = img.device
@@ -305,7 +310,8 @@ class ObjectScalePlacer:
         nx1, ny1 = nx0 + nw, ny0 + nh
 
         # --- автосдвиг при столкновении с предметами на той же глубине
-        shift_dx, coll_before, coll_after = 0, 0, 0
+        shift_dx, coll_before, coll_after, shift_side = 0, 0, 0, "-"
+        coll_vis = None
         if auto_shift and occluders is not None and depth is not None and shift_max > 0:
             occ_c = occluders.float().to(dev)
             if occ_c.dim() == 3:
@@ -322,43 +328,49 @@ class ObjectScalePlacer:
                 d_back = torch.quantile(v, 0.1) - depth_margin
                 d_fr = torch.quantile(v, 0.9) + depth_margin
                 obst = occ_c * (dep_c >= d_back).float() * (dep_c <= d_fr).float()
-                # силуэт нового объекта и его нижняя полоса (опора)
+                # силуэт нового объекта и проверяемая нижняя доля
                 foot = F.interpolate(rm_c[None, None], size=(nh, nw), mode="bilinear",
                                      align_corners=False)[0, 0]
                 foot = (foot > 0.5).float()
-                band0 = int(round(nh * (1.0 - collision_band)))
-                foot[:band0] = 0
-                # исходное наложение объекта этапа 1 считаем допустимым
+                foot[:int(round(nh * (1.0 - collision_band)))] = 0
+                # там, где объект этапа 1 уже касался предметов, касание допустимо
                 old_foot = old.clone()
-                ob0 = int(round(oy1 - oh * collision_band))
-                old_foot[:max(0, ob0)] = 0
-                base = float((old_foot * obst).sum().item())
+                old_foot[:max(0, int(round(oy1 - oh * collision_band)))] = 0
+                obst = obst * (1 - _dilate(old_foot, 4))
                 tol = max(16.0, 0.01 * float(foot.sum().item()))
 
-                def cost(dx):
+                def overlap(dx):
                     x0 = nx0 + dx
-                    ov = float((foot * obst[ny0:ny1, x0:x0 + nw]).sum().item())
-                    return max(0.0, ov - base)
+                    return foot * obst[ny0:ny1, x0:x0 + nw]
 
-                c0 = cost(0)
-                coll_before = int(c0)
-                coll_after = coll_before
+                ov0 = overlap(0)
+                c0 = float(ov0.sum().item())
+                coll_before = coll_after = int(c0)
+                coll_vis = torch.zeros((H, W), device=dev)
+                coll_vis[ny0:ny1, nx0:nx1] = ov0
                 if c0 > tol:
+                    if shift_direction == "left":
+                        sign = -1
+                    elif shift_direction == "right":
+                        sign = 1
+                    else:  # прочь от места столкновения
+                        cols = ov0.sum(dim=0)
+                        xs = torch.arange(nw, device=dev, dtype=torch.float32)
+                        cx = float((cols * xs).sum().item() / max(1e-6, cols.sum().item()))
+                        sign = -1 if cx > nw / 2.0 else 1
                     best = (c0, 0)
                     for dist in range(2, int(shift_max) + 1, 2):
-                        found = False
-                        for dx in (-dist, dist):
-                            if nx0 + dx < 0 or nx0 + dx + nw > W:
-                                continue
-                            c = cost(dx)
-                            if c < best[0]:
-                                best = (c, dx)
-                            if c <= tol:
-                                found = True
-                        if found:
+                        dx = sign * dist
+                        if nx0 + dx < 0 or nx0 + dx + nw > W:
+                            break
+                        c = float(overlap(dx).sum().item())
+                        if c < best[0]:
+                            best = (c, dx)
+                        if c <= tol:
                             break
                     shift_dx = best[1]
                     coll_after = int(best[0])
+                    shift_side = "влево" if sign < 0 else "вправо"
                     nx0 += shift_dx
                     nx1 = nx0 + nw
 
@@ -475,6 +487,10 @@ class ObjectScalePlacer:
         prev = _draw_rect(prev, ox0, oy0, ox1, oy1, 3, (1.0, 0.0, 0.0))
         prev = _draw_rect(prev, nx0, ny0, nx1, ny1, 3, (0.0, 0.4, 1.0))
 
+        if coll_vis is not None:  # пурпурным — где было столкновение до сдвига
+            cv = coll_vis[..., None] * 0.7
+            prev = prev * (1 - cv) + torch.tensor([1.0, 0.0, 1.0], device=dev) * cv
+
         info = (f"режим: {mode}; масштаб: "
                 f"{'авто' if scale_percent <= 0 else f'{scale_percent:.0f}% от авто'} "
                 f"(fit={fit}, anchor={anchor}, h_anchor={h_anchor}, "
@@ -485,7 +501,7 @@ class ObjectScalePlacer:
                 f"маска референса: {src}; фон: {bg_src}; "
                 f"доп. защита (предметы спереди): {extra_px} px; "
                 f"тень перенесена: {shadow_px} px; "
-                f"автосдвиг: {shift_dx:+d} px (наложение {coll_before} -> {coll_after} px)"
+                f"автосдвиг: {shift_dx:+d} px {shift_side} (наложение {coll_before} -> {coll_after} px)"
                 + ("; ВНИМАНИЕ: объект ограничен размером кадра" if k < 1.0 else ""))
         return (guide[None].clamp(0, 1), union[None], obj_mask[None],
                 prev[None].clamp(0, 1), info, prot[None])
