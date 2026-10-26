@@ -19,18 +19,10 @@ import math
 import torch
 import torch.nn.functional as F
 
-from .common import _resize_mask
+from .common import _resize_mask, _bbox
 
 
 # ----------------------------------------------------------------- helpers
-
-def _bbox(m, thr=0.5):
-    """Габаритная рамка маски (H,W) -> (x0, y0, x1, y1) или None."""
-    ys, xs = torch.nonzero(m > thr, as_tuple=True)
-    if ys.numel() == 0:
-        return None
-    return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
-
 
 def _dilate(m, r):
     if r <= 0:
