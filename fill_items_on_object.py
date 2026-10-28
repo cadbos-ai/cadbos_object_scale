@@ -26,9 +26,15 @@ class FillItemsOnObject:
                            "низа объекта больше чем на эту долю высоты объекта."}),
             "grow": ("INT", {"default": 6, "min": 0, "max": 64}),
             "min_area": ("INT", {"default": 32, "min": 0, "max": 100000}),
+        },
+        "optional": {
+            "background": ("IMAGE", {
+                "tooltip": "Сцена без старого объекта (узел 220). То, что торчит над "
+                           "объектом, заполняется отсюда, а не цветом объекта."}),
         }}
 
-    def run(self, image, items, object_mask, floor_tolerance, grow, min_area):
+    def run(self, image, items, object_mask, floor_tolerance, grow, min_area,
+            background=None):
         img = image[0].float()
         dev = img.device
         H, W, _ = img.shape
@@ -40,7 +46,7 @@ class FillItemsOnObject:
         hole = torch.zeros((H, W), device=dev)
         info = "предметов на объекте не найдено"
         if obj.sum() > 0 and it.sum() > 0:
-            it = it * _dilate(obj, 8)  # только то, что в пределах объекта
+            it = it * _dilate(obj, 32)  # только то, что в пределах объекта
             o_np = obj.cpu().numpy() > 0.5
             ys = np.where(o_np.any(axis=1))[0]
             floor_line = float(ys[-1]) - float(floor_tolerance) * float(ys[-1] - ys[0] + 1)
@@ -56,6 +62,18 @@ class FillItemsOnObject:
                     k += 1
             if k > 0:
                 hole = _dilate(torch.from_numpy(keep).to(dev), int(grow))
-                img = _push_pull_fill(img, hole)
+                # внутри контура объекта — заливка только цветом самого объекта
+                img = _push_pull_fill(img, hole, exclude=(1 - obj))
+                if background is not None:
+                    # выше верхнего края объекта (в каждом столбце) — фон без объекта
+                    top = np.where(o_np.any(axis=0), o_np.argmax(axis=0), H)
+                    above = torch.from_numpy(
+                        (np.arange(H)[:, None] < top[None, :]).astype(np.float32)).to(dev)
+                    bg = background[0].float().to(dev)[..., :3]
+                    if bg.shape[0] != H or bg.shape[1] != W:
+                        bg = F.interpolate(bg.permute(2, 0, 1)[None], size=(H, W),
+                                           mode="bilinear", align_corners=False)[0].permute(1, 2, 0)
+                    out = (hole * above)[..., None]
+                    img = img * (1 - out) + bg * out
             info = f"найдено областей: {n}; стёрто как лежащие на объекте: {k}"
         return (img[None].clamp(0, 1), hole[None], info)
