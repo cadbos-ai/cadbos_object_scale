@@ -373,6 +373,16 @@ class ObjectScalePlacer:
             guide = torch.where(prot[..., None] > 0.5, base, guide)
             obj_mask = box.clone()
 
+        # --- 2б) масштаб 100% без сдвига: объект уже на месте, берём кадр reference как есть
+        passthrough = (mode == "collage" and background is not None
+                       and abs(factor - 1.0) < 1e-3 and k >= 1.0 and shift_dx == 0
+                       and int(offset_x) == 0 and int(offset_y) == 0
+                       and h_anchor == "center" and RH == H and RW == W)
+        if passthrough:
+            guide = ref[..., :3].clone()
+            obj_mask = rm * (1 - prot)
+            shadow_px = 0
+
         # --- 3) маска перерисовки: старый объект + место нового
         union = torch.maximum(_dilate(old, erase_grow), box)
 
@@ -392,7 +402,8 @@ class ObjectScalePlacer:
                 f"старый объект: {ow}x{oh}px @({ox0},{oy0}); "
                 f"новый объект: {nw}x{nh}px @({nx0},{ny0}); "
                 f"итоговый коэффициент к референсу: {s * k:.3f}\n"
-                f"маска референса: {src}; фон: {bg_src}; "
+                f"маска референса: {src}; фон: {bg_src}"
+                f"{' (100%: кадр reference без вырезки)' if passthrough else ''}; "
                 f"доп. защита (предметы спереди): {extra_px} px; "
                 f"тень перенесена: {shadow_px} px; "
                 f"автосдвиг: {shift_dx:+d} px {shift_side} (наложение {coll_before} -> {coll_after} px)"
