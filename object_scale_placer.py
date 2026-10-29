@@ -140,6 +140,13 @@ class ObjectScalePlacer:
         old = (old > 0.5).float()
         bb_old = _bbox(old)
         if bb_old is None:
+            if (background is not None and reference.shape[1] == H
+                    and reference.shape[2] == W):
+                z = torch.zeros((1, H, W), device=dev)
+                g = reference[0].float().to(dev)[..., :3][None].clamp(0, 1)
+                return (g, z, z, g,
+                        "ВНИМАНИЕ: объект не найден на результате этапа 1 — "
+                        "передан результат этапа 1 без масштабирования", z)
             raise ValueError("Object Scale Placer: маска старого объекта пустая — "
                              "GroundingDINO не нашёл объект. Проверьте название объекта.")
         ox0, oy0, ox1, oy1 = bb_old
