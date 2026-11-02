@@ -27,9 +27,15 @@ class MaskKeepInFront:
                 "default": 64, "min": 0, "max": 100000, "step": 1,
                 "tooltip": "Области меньше этой площади (px) отбрасываются."}),
             "depth_near_is_bright": ("BOOLEAN", {"default": True}),
+            "mode": (["global", "local"], {
+                "default": "global",
+                "tooltip": "global — сравнение с передним краем объекта; "
+                           "local — с частью объекта рядом с областью (для соседей, "
+                           "которые перекрывают объект или перекрыты им)."}),
         }}
 
-    def run(self, mask, reference, depth, depth_margin, min_area, depth_near_is_bright):
+    def run(self, mask, reference, depth, depth_margin, min_area, depth_near_is_bright,
+            mode="global"):
         m = mask.float()
         if m.dim() == 3:
             m = m.amax(dim=0)
@@ -57,7 +63,19 @@ class MaskKeepInFront:
                 comp = lab == i
                 if int(comp.sum()) < min_area:
                     continue
-                if float(np.median(d_np[comp])) > thr:
+                if mode == "local":
+                    ys, xs = np.nonzero(comp)
+                    y0, y1 = max(0, ys.min() - 24), min(H, ys.max() + 25)
+                    x0, x1 = max(0, xs.min() - 24), min(W, xs.max() + 25)
+                    c_sub = comp[y0:y1, x0:x1]
+                    near = ndi.binary_dilation(c_sub, iterations=24) & r_np[y0:y1, x0:x1]
+                    if int(near.sum()) < 16:
+                        continue  # не соприкасается с объектом
+                    d_sub = d_np[y0:y1, x0:x1]
+                    if float(np.median(d_sub[c_sub])) > float(np.median(d_sub[near])) + float(depth_margin):
+                        out[comp] = 1.0
+                        kept += 1
+                elif float(np.median(d_np[comp])) > thr:
                     out[comp] = 1.0
                     kept += 1
             info = (f"областей: {n}; оставлено (перед объектом): {kept}; "
