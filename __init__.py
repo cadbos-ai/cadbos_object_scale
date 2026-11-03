@@ -8,6 +8,7 @@ from .exclude_word_from_list import ExcludeWordFromList
 from .mask_subtract_parts import MaskSubtractParts
 from .mask_fallback import MaskFallback
 from .string_fallback import StringFallback
+from .object_orientation_text import ObjectOrientationText
 
 
 NODE_CLASS_MAPPINGS = {
@@ -21,6 +22,7 @@ NODE_CLASS_MAPPINGS = {
     "MaskSubtractParts": MaskSubtractParts,
     "MaskFallback": MaskFallback,
     "StringFallback": StringFallback,
+    "ObjectOrientationText": ObjectOrientationText,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ObjectScalePlacer": "Object Scale Placer (cadbos)",
@@ -33,6 +35,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MaskSubtractParts": "Mask Subtract Parts",
     "MaskFallback": "Mask Fallback",
     "StringFallback": "String Fallback",
+    "ObjectOrientationText": "Object Orientation Text",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
