@@ -7,6 +7,7 @@ from .mask_keep_outside import MaskKeepOutside
 from .exclude_word_from_list import ExcludeWordFromList
 from .mask_subtract_parts import MaskSubtractParts
 from .mask_fallback import MaskFallback
+from .string_fallback import StringFallback
 
 
 NODE_CLASS_MAPPINGS = {
@@ -19,6 +20,7 @@ NODE_CLASS_MAPPINGS = {
     "ExcludeWordFromList": ExcludeWordFromList,
     "MaskSubtractParts": MaskSubtractParts,
     "MaskFallback": MaskFallback,
+    "StringFallback": StringFallback,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ObjectScalePlacer": "Object Scale Placer (cadbos)",
@@ -30,6 +32,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ExcludeWordFromList": "Exclude Word From List",
     "MaskSubtractParts": "Mask Subtract Parts",
     "MaskFallback": "Mask Fallback",
+    "StringFallback": "String Fallback",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
