@@ -5,6 +5,7 @@ from .fill_items_on_object import FillItemsOnObject
 from .mask_convex_hull import MaskConvexHull
 from .mask_keep_outside import MaskKeepOutside
 from .exclude_word_from_list import ExcludeWordFromList
+from .mask_subtract_parts import MaskSubtractParts
 
 
 NODE_CLASS_MAPPINGS = {
@@ -15,6 +16,7 @@ NODE_CLASS_MAPPINGS = {
     "MaskConvexHull": MaskConvexHull,
     "MaskKeepOutside": MaskKeepOutside,
     "ExcludeWordFromList": ExcludeWordFromList,
+    "MaskSubtractParts": MaskSubtractParts,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ObjectScalePlacer": "Object Scale Placer (cadbos)",
@@ -24,6 +26,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MaskConvexHull": "Mask Convex Hull",
     "MaskKeepOutside": "Mask Keep Outside",
     "ExcludeWordFromList": "Exclude Word From List",
+    "MaskSubtractParts": "Mask Subtract Parts",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
