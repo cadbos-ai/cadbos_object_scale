@@ -8,11 +8,11 @@ from .common import _resize_mask
 class MaskSubtractParts:
     """Вычитает из base только небольшие области parts. Область, которая
     накрывает заметную часть base (тот же объект, найденный под другим
-    названием), не вычитается."""
+    названием), не вычитается. Выход removed — то, что было вычтено."""
     CATEGORY = "cadbos/object"
     FUNCTION = "run"
-    RETURN_TYPES = ("MASK", "STRING")
-    RETURN_NAMES = ("mask", "info")
+    RETURN_TYPES = ("MASK", "STRING", "MASK")
+    RETURN_NAMES = ("mask", "info", "removed")
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -39,6 +39,7 @@ class MaskSubtractParts:
         p_np = p.cpu().numpy() > 0.5
         total = float(b_np.sum())
         out = b_np.copy()
+        removed = np.zeros((H, W), dtype=bool)
         lab, n = ndi.label(p_np)
         cut, skipped = 0, 0
         for i in range(1, n + 1):
@@ -50,6 +51,8 @@ class MaskSubtractParts:
                 skipped += 1  # это сам объект под другим названием
                 continue
             out &= ~comp
+            removed |= comp
             cut += 1
         info = f"вычтено областей: {cut}; пропущено (сам объект): {skipped}"
-        return (torch.from_numpy(out.astype(np.float32))[None].to(base.device), info)
+        to_t = lambda a: torch.from_numpy(a.astype(np.float32))[None].to(base.device)
+        return (to_t(out), info, to_t(removed))
