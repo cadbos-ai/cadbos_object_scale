@@ -4,6 +4,7 @@ from .reference_scale_for_crop import ReferenceScaleForCrop
 from .fill_items_on_object import FillItemsOnObject
 from .mask_convex_hull import MaskConvexHull
 from .mask_keep_outside import MaskKeepOutside
+from .exclude_word_from_list import ExcludeWordFromList
 
 
 NODE_CLASS_MAPPINGS = {
@@ -13,6 +14,7 @@ NODE_CLASS_MAPPINGS = {
     "FillItemsOnObject": FillItemsOnObject,
     "MaskConvexHull": MaskConvexHull,
     "MaskKeepOutside": MaskKeepOutside,
+    "ExcludeWordFromList": ExcludeWordFromList,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ObjectScalePlacer": "Object Scale Placer (cadbos)",
@@ -21,6 +23,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "FillItemsOnObject": "Fill Items On Object",
     "MaskConvexHull": "Mask Convex Hull",
     "MaskKeepOutside": "Mask Keep Outside",
+    "ExcludeWordFromList": "Exclude Word From List",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
