@@ -335,7 +335,7 @@ class ObjectScalePlacer:
             l_ref = (ref[sy0:sy1, sx0:sx1, :3] * wts).sum(-1)
             l_bg = (sh[sy0:sy1, sx0:sx1] * wts).sum(-1)
             ratio = (l_ref + 1e-3) / (l_bg + 1e-3)
-            objm = _dilate((rm[sy0:sy1, sx0:sx1] > 0.5).float(), 2)
+            objm = _dilate((rm[sy0:sy1, sx0:sx1] > 0.5).float(), 4)
             f = max(2, m // 3)
             inner = torch.zeros_like(ratio)
             if ratio.shape[0] > 2 * f and ratio.shape[1] > 2 * f:
@@ -345,7 +345,7 @@ class ObjectScalePlacer:
                 ratio = ratio / torch.quantile(ratio[border > 0.5], 0.75).clamp_min(1e-3)
             ratio = ratio.clamp(0, 1)
             ratio = _push_pull_fill(ratio[..., None], objm)[..., 0]  # под объектом — по соседям
-            ratio = _blur(ratio, 4)
+            ratio = _blur(ratio, 2)
             dark = ((1 - ratio) - 0.05).clamp_min(0) / 0.95
             if shadow_reach > 0:  # оставить только контактную тень у объекта
                 near = _dilate((rm[sy0:sy1, sx0:sx1] > 0.5).float(), int(shadow_reach))
@@ -371,7 +371,7 @@ class ObjectScalePlacer:
                                antialias=antialias)[0].permute(1, 2, 0).clamp(0, 1)
             am = F.interpolate(rm_c[None, None], size=(nh, nw), mode="bilinear",
                                align_corners=False, antialias=antialias)[0, 0]
-            am = _blur(_erode((am > 0.5).float(), 1), 1)  # мягкий край
+            am = _blur((am > 0.5).float(), 1)  # мягкий край без сужения
             am = am * (1 - prot[ny0:ny1, nx0:nx1])
             region = guide[ny0:ny1, nx0:nx1]
             guide[ny0:ny1, nx0:nx1] = region * (1 - am[..., None]) + rc * am[..., None]
