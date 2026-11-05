@@ -120,6 +120,10 @@ class ObjectScalePlacer:
                     "default": "auto",
                     "tooltip": "Куда сдвигать при столкновении: auto — прочь от места "
                                "столкновения; left / right — только в эту сторону."}),
+                "keep_reference_frame": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "При масштабе 100% брать весь кадр reference вместо вырезки. "
+                                "Вместе с объектом переносятся все изменения пола и фона."}),
             },
         }
 
@@ -131,7 +135,7 @@ class ObjectScalePlacer:
               offset_x=0, offset_y=0, shadow_source=None,
               shadow_margin=48, shadow_strength=1.0, shadow_reach=0,
               auto_shift=False, shift_max=200, collision_band=0.35,
-              shift_direction="auto"):
+              shift_direction="auto", keep_reference_frame=False):
         img = scene[0].clone().float()
         H, W, _ = img.shape
         dev = img.device
@@ -381,10 +385,12 @@ class ObjectScalePlacer:
             obj_mask = box.clone()
 
         # --- 2б) масштаб 100% без сдвига: объект уже на месте, берём кадр reference как есть
-        passthrough = (mode == "collage" and background is not None
-                       and abs(factor - 1.0) < 1e-3 and k >= 1.0 and shift_dx == 0
-                       and int(offset_x) == 0 and int(offset_y) == 0
-                       and h_anchor == "center" and RH == H and RW == W)
+        passthrough = (keep_reference_frame and mode == "collage"
+                        and background is not None
+                        and abs(factor - 1.0) < 1e-3 and k >= 1.0
+                        and shift_dx == 0
+                        and int(offset_x) == 0 and int(offset_y) == 0
+                        and h_anchor == "center" and RH == H and RW == W)
         if passthrough:
             guide = ref[..., :3].clone()
             obj_mask = rm * (1 - prot)
