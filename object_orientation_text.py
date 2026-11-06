@@ -80,4 +80,5 @@ class ObjectOrientationText:
         phrase, info = _orientation(m.cpu().numpy() > 0.5, dep.cpu().numpy(), float(horizon))
         if phrase is None:
             return ("", info)
-        return (f"Orientation of the old object: {phrase}.", info)
+        return (f"Required orientation of the new object: {phrase}. "
+                f"This overrides the viewing angle of Picture 2.", info)
