@@ -11,6 +11,7 @@ from .string_fallback import StringFallback
 from .object_orientation_text import ObjectOrientationText
 from .mask_recover_thin import MaskRecoverThin
 from .mask_fill_object_holes import MaskFillObjectHoles
+from .mask_clear_top import MaskClearTop
 
 
 NODE_CLASS_MAPPINGS = {
@@ -27,6 +28,7 @@ NODE_CLASS_MAPPINGS = {
     "ObjectOrientationText": ObjectOrientationText,
     "MaskRecoverThin": MaskRecoverThin,
     "MaskFillObjectHoles": MaskFillObjectHoles,
+    "MaskClearTop": MaskClearTop,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ObjectScalePlacer": "Object Scale Placer (cadbos)",
@@ -42,6 +44,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ObjectOrientationText": "Object Orientation Text",
     "MaskRecoverThin": "Mask Recover Thin",
     "MaskFillObjectHoles": "Mask Fill Object Holes",
+    "MaskClearTop": "Mask Clear Top",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
